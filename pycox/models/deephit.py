@@ -112,6 +112,51 @@ class DeepHit(tt.Model):
         dataloader = super().make_dataloader(input, batch_size, shuffle, num_workers)
         return dataloader
 
+    def predict_haz_df(self, input, batch_size=8224, eval_=True, num_workers=0):
+        """Predict the hazard function for `input`,
+        and return as a pandas DataFrame.
+        See `prediction_haz_df` to return a DataFrame instead.
+
+        Arguments:
+            input {tuple, np.ndarra, or torch.tensor} -- Input to net.
+
+        Keyword Arguments:
+            batch_size {int} -- Batch size (default: {8224})
+            eval_ {bool} -- If 'True', use 'eval' modede on net. (default: {True})
+            num_workers {int} -- Number of workes in created dataloader (default: {0})
+
+        Returns:
+            pd.DataFrame -- Predictions
+        """
+        haz = self.predict_haz(input, batch_size, True, eval_, True, num_workers)
+        return pd.DataFrame(haz, self.duration_index)
+
+    def predict_haz(self, input, batch_size=8224, numpy=None, eval_=True,
+                     to_cpu=False, num_workers=0):
+        """Predict the hazard function for `input`,
+        See `prediction_haz_df` to return a DataFrame instead.
+
+        Arguments:
+            input {tuple, np.ndarray, or torch.tensor} -- Input to net.
+
+        Keyword Arguments:
+            batch_size {int} -- Batch size (default: {8224})
+            numpy {bool} -- 'False' gives tensor, 'True' gives numpy, and None give same as input
+                (default: {None})
+            eval_ {bool} -- If 'True', use 'eval' modede on net. (default: {True})
+            to_cpu {bool} -- For larger data sets we need to move the results to cpu
+                (default: {False})
+            num_workers {int} -- Number of workes in created dataloader (default: {0})
+
+        Returns:
+            [TupleTree, np.ndarray or tensor] -- Predictions
+        """
+        surv = self.predict_surv(input, batch_size, False, eval_, to_cpu, num_workers)
+        pmf = self.predict_pmf(input, batch_size, False, eval_, to_cpu, num_workers)
+
+        haz = pmf / pad_col(surv, 1, 'start')[:, :-1]
+        return tt.utils.array_or_tensor(haz, numpy, input)
+
     def predict_surv_df(self, input, batch_size=8224, eval_=True, num_workers=0):
         """Predict the survival function for `input`, i.e., survive all of the event types,
         and return as a pandas DataFrame.

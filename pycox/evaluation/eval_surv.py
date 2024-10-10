@@ -12,6 +12,7 @@ class EvalSurv:
     
     Arguments:
         surv {pd.DataFrame} -- Survival predictions.
+        haz {pd.DataFrame} -- Hazard predictions.
         durations {np.array} -- Durations of test set.
         events {np.array} -- Events of test set.
 
@@ -25,9 +26,10 @@ class EvalSurv:
         steps {str} -- For durations between values of `surv.index` choose the higher index 'pre'
             or lower index 'post'. For a visualization see `help(EvalSurv.steps)`. (default: {'post'})
     """
-    def __init__(self, surv, durations, events, censor_surv=None, censor_durations=None, steps='post'):
+    def __init__(self, surv, haz, durations, events, censor_surv=None, censor_durations=None, steps='post'):
         assert (type(durations) == type(events) == np.ndarray), 'Need `durations` and `events` to be arrays'
         self.surv = surv
+        self.haz = haz
         self.durations = durations
         self.events = events
         self.censor_surv = censor_surv
@@ -92,7 +94,7 @@ class EvalSurv:
             or lower index 'post'. If `None` use `self.steps` (default: {None})
         """
         if not isinstance(censor_surv, EvalSurv):
-            censor_surv = self._constructor(censor_surv, self.durations, 1-self.events, None,
+            censor_surv = self._constructor(censor_surv, None, self.durations, 1-self.events, None,
                                             steps=steps)
         self.censor_surv = censor_surv
         return self
@@ -135,7 +137,7 @@ class EvalSurv:
         surv = self.surv.iloc[:, index]
         durations = self.durations[index]
         events = self.events[index]
-        new = self._constructor(surv, durations, events, None, steps=self.steps)
+        new = self._constructor(surv, None, durations, events, None, steps=self.steps)
         if self.censor_surv is not None:
             new.censor_surv = self.censor_surv[index]
         return new
@@ -188,6 +190,27 @@ class EvalSurv:
             float -- Time dependent concordance index.
         """
         return concordance_td(self.durations, self.events, self.surv.values,
+                              self._duration_idx(), method)
+
+    def concordance_alpha(self, method='adj_antolini'):
+        """Time dependent concorance index from
+        Gandy, Matcham
+
+        If 'method' is 'antolini', the concordance from Antolini et al. is computed.
+
+        If 'method' is 'adj_antolini' (default) we have made a small modifications
+        for ties in predictions and event times.
+        We have followed step 3. in Sec 5.1. in Random Survival Forests paper, except for the last
+        point with "T_i = T_j, but not both are deaths", as that doesn't make much sense.
+        See 'metrics._is_concordant'.
+
+        Keyword Arguments:
+            method {str} -- Type of c-index 'antolini' or 'adj_antolini' (default {'adj_antolini'}).
+
+        Returns:
+            float -- Time dependent concordance index.
+        """
+        return concordance_td(self.durations, self.events, -self.haz.values,
                               self._duration_idx(), method)
 
     def brier_score(self, time_grid, max_weight=np.inf):

@@ -133,6 +133,26 @@ class _CoxBase(models.base.SurvBase):
                                     eval_=True, num_workers=0):
         raise NotImplementedError
 
+
+    def predict_relative_hazards(self, input, max_duration=None, batch_size=8224, verbose=False,
+                                   baseline_hazards_=None, eval_=True, num_workers=0):
+        """See `predict_survival_function`."""
+        if type(input) is pd.DataFrame:
+            input = self.df_to_input(input)
+        if baseline_hazards_ is None:
+            if not hasattr(self, 'baseline_hazards_'):
+                raise ValueError('Need to compute baseline_hazards_. E.g run `model.compute_baseline_hazards()`')
+            baseline_hazards_ = self.baseline_hazards_
+        assert baseline_hazards_.index.is_monotonic_increasing,\
+            'Need index of baseline_hazards_ to be monotonic increasing, as it represents time.'
+        return self._predict_relative_hazards(input, max_duration, batch_size, verbose, baseline_hazards_,
+                                                eval_, num_workers=num_workers)
+
+    def _predict_relative_hazards(self, input, max_duration, batch_size, verbose, baseline_hazards_,
+                                    eval_=True, num_workers=0):
+        raise NotImplementedError
+
+
     def predict_surv_df(self, input, max_duration=None, batch_size=8224, verbose=False, baseline_hazards_=None,
                         eval_=True, num_workers=0):
         """Predict survival function for `input`. S(x, t) = exp(-H(x, t))
@@ -178,6 +198,54 @@ class _CoxBase(models.base.SurvBase):
                                     eval_, num_workers)
         surv = torch.from_numpy(surv.values.transpose())
         return tt.utils.array_or_tensor(surv, numpy, input)
+
+
+    def predict_rel_haz_df(self, input, max_duration=None, batch_size=8224, verbose=False, baseline_hazards_=None,
+                        eval_=True, num_workers=0):
+        """Predict survival function for `input`. S(x, t) = exp(-H(x, t))
+        Require computed baseline hazards.
+
+        Arguments:
+            input {np.array, tensor or tuple} -- Input x passed to net.
+
+        Keyword Arguments:
+            max_duration {float} -- Don't compute estimates for duration higher (default: {None})
+            batch_size {int} -- Batch size (default: {8224})
+            baseline_hazards_ {pd.Series} -- Baseline hazards. If `None` used `model.baseline_hazards_` (default: {None})
+            eval_ {bool} -- If 'True', use 'eval' mode on net. (default: {True})
+            num_workers {int} -- Number of workers in created dataloader (default: {0})
+
+        Returns:
+            pd.DataFrame -- Survival estimates. One columns for each individual.
+        """
+        return self.predict_relative_hazards(input, max_duration, batch_size, verbose, baseline_hazards_,
+                                                       eval_, num_workers)
+
+    def predict_rel_haz(self, input, max_duration=None, batch_size=8224, numpy=None, verbose=False,
+                     baseline_hazards_=None, eval_=True, num_workers=0):
+        """Predict survival function for `input`. S(x, t) = exp(-H(x, t))
+        Require compueted baseline hazards.
+
+        Arguments:
+            input {np.array, tensor or tuple} -- Input x passed to net.
+
+        Keyword Arguments:
+            max_duration {float} -- Don't compute estimates for duration higher (default: {None})
+            batch_size {int} -- Batch size (default: {8224})
+            numpy {bool} -- 'False' gives tensor, 'True' gives numpy, and None give same as input
+                (default: {None})
+            baseline_hazards_ {pd.Series} -- Baseline hazards. If `None` used `model.baseline_hazards_` (default: {None})
+            eval_ {bool} -- If 'True', use 'eval' mode on net. (default: {True})
+            num_workers {int} -- Number of workers in created dataloader (default: {0})
+
+        Returns:
+            pd.DataFrame -- Survival estimates. One columns for each individual.
+        """
+        surv = self.predict_rel_haz_df(input, max_duration, batch_size, verbose, baseline_hazards_,
+                                    eval_, num_workers)
+        surv = torch.from_numpy(surv.values.transpose())
+        return tt.utils.array_or_tensor(surv, numpy, input)
+
 
     def save_net(self, path, **kwargs):
         """Save self.net and baseline hazards to file.

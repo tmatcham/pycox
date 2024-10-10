@@ -56,6 +56,15 @@ class CoxTime(models.cox_cc._CoxCCBase):
             surv.index = self.labtrans.map_scaled_to_orig(surv.index)
         return surv
 
+
+    def predict_rel_haz_df(self, input, max_duration=None, batch_size=8224, verbose=False, baseline_hazards_=None,
+                        eval_=True, num_workers=0):
+        rel_haz = super().predict_rel_haz_df(input, max_duration, batch_size, verbose, baseline_hazards_,
+                                       eval_, num_workers)
+        if self.labtrans is not None:
+            rel_haz.index = self.labtrans.map_scaled_to_orig(rel_haz.index)
+        return rel_haz
+
     def compute_baseline_hazards(self, input=None, target=None, max_duration=None, sample=None, batch_size=8224,
                                 set_hazards=True, eval_=True, num_workers=0):
         if (input is None) and (target is None):
@@ -131,6 +140,27 @@ class CoxTime(models.cox_cc._CoxCCBase):
         hazards[baseline_hazards_.values == 0] = 0.  # in case hazards are inf here
         hazards *= baseline_hazards_.values.reshape(-1, 1)
         return pd.DataFrame(hazards, index=baseline_hazards_.index).cumsum()
+
+    def _predict_relative_hazards(self, input, max_duration, batch_size, verbose, baseline_hazards_,
+                                    eval_=True, num_workers=0):
+        def expg_at_time(t):
+            t = np.repeat(t, n_cols).reshape(-1, 1).astype('float32')
+            if tt.tuplefy(input).type() is torch.Tensor:
+                t = torch.from_numpy(t)
+            return np.exp(self.predict((input, t), batch_size, True, eval_, num_workers=num_workers)).flatten()
+
+        if tt.utils.is_dl(input):
+            raise NotImplementedError(f"Prediction with a dataloader as input is not supported ")
+        input = tt.tuplefy(input)
+        max_duration = np.inf if max_duration is None else max_duration
+        baseline_hazards_ = baseline_hazards_.loc[lambda x: x.index <= max_duration]
+        n_rows, n_cols = baseline_hazards_.shape[0], input.lens().flatten().get_if_all_equal()
+        hazards = np.empty((n_rows, n_cols))
+        for idx, t in enumerate(baseline_hazards_.index):
+            if verbose:
+                print(idx, 'of', len(baseline_hazards_))
+            hazards[idx, :] = expg_at_time(t)
+        return pd.DataFrame(hazards, index=baseline_hazards_.index)
 
     def partial_log_likelihood(self, input, target, batch_size=8224, eval_=True, num_workers=0):
         def expg_sum(t, i):

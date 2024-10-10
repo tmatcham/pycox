@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pycox.datasets._dataset_loader import _DatasetLoader, _PATH_DATA
+import gc
 
 class _DatasetKKBoxChurn(_DatasetLoader):
     """KKBox churn data set obtained from Kaggle (WSDM - KKBox's Churn Prediction Challenge 2017).
@@ -138,9 +139,9 @@ class _DatasetKKBoxChurn(_DatasetLoader):
         self._download()
 
     def _download(self):
-        self._setup_download_dir()
-        self._7z_from_kaggle()
-        self._csv_to_feather_with_types()
+        #self._setup_download_dir()
+        #self._7z_from_kaggle()
+        #self._csv_to_feather_with_types()
         print('Creating survival data...')
         self._make_survival_data()
         print('Creating covariates...')
@@ -211,7 +212,7 @@ class _DatasetKKBoxChurn(_DatasetLoader):
         trans = (pd.read_feather(self._path_dir / 'transactions.feather')
                  [['msno', 'transaction_date', 'membership_expire_date', 'is_cancel']])
         last_churn_date = '2017-01-29' # 30 days before last transactions are made in the dataset.
-
+        print('1')
         # Churn: More than 30 days before reentering
         def days_without_membership(df):
             diff = (df['next_trans_date'] - df['membership_expire_date']).dt.total_seconds()
@@ -221,10 +222,12 @@ class _DatasetKKBoxChurn(_DatasetLoader):
                  .sort_values(['msno', 'transaction_date'])
                  .assign(next_trans_date=(lambda x: x.groupby('msno')['transaction_date'].shift(-1)))
                  .assign(churn30=lambda x: days_without_membership(x) > 30))
+        print('2')
 
         # Remove entries with membership_expire_date < transaction_date
         trans = trans.loc[lambda x: x['transaction_date'] <= x['membership_expire_date']]
         assert (trans.loc[lambda x: x['churn30']==True].groupby(['msno', 'transaction_date'])['msno'].count().max() == 1)
+        print('3')
 
         # Churn: Leaves forever
         trans = (trans
@@ -234,6 +237,7 @@ class _DatasetKKBoxChurn(_DatasetLoader):
                                      (x['transaction_date'] == x['max_trans_date']) &
                                      (x['membership_expire_date'] <= last_churn_date)
                                      )))
+        print('4')
 
         # Churn: From training set
         trans = (trans
@@ -242,13 +246,17 @@ class _DatasetKKBoxChurn(_DatasetLoader):
                  .drop('is_churn', axis=1)
                  .assign(train_churn=lambda x: (x['max_trans_date'] == x['transaction_date']) & x['train_churn'])
                  .assign(churn=lambda x: x['train_churn'] | x['churn30'] | x['final_churn']))
+        print('6')
 
+        del train
+        gc.collect()
         # Split individuals on churn
         trans = (trans
                  .join(trans
                        .sort_values(['msno', 'transaction_date'])
                        .groupby('msno')[['churn30', 'membership_expire_date']].shift(1)
                        .rename(columns={'churn30': 'new_start', 'membership_expire_date': 'prev_mem_exp_date'})))
+        print('7')
 
         def number_of_new_starts(df):
             return (df
@@ -268,12 +276,7 @@ class _DatasetKKBoxChurn(_DatasetLoader):
         trans = (trans
                  .assign(n_prev_churns=lambda x: number_of_new_starts(x),
                          days_between_subs=lambda x: days_between_subs(x)))
-
-        # Set start times
-        trans = (trans
-                 .assign(start_date=trans.groupby(['msno', 'n_prev_churns'])['transaction_date'].transform('min'))
-                 .assign(first_churn=lambda x: (x['n_prev_churns'] == 0) & (x['churn'] == True)))
-
+        print('8')
         # Get only last transactions (per chrun)
         indivs = (trans
                   .assign(censored=lambda x: x.groupby('msno')['churn'].transform('sum') == 0)
@@ -283,6 +286,18 @@ class _DatasetKKBoxChurn(_DatasetLoader):
                                           ))
                   .loc[lambda x: x['last_censored'] | x['churn']]
                   .merge(members[['msno', 'registration_init_time']], how='left', on='msno'))
+        del trans
+        del members
+
+        gc.collect()
+        print('9')
+        # Set start times
+        indivs = (indivs
+                 .assign(start_date=indivs.groupby(['msno', 'n_prev_churns'])['transaction_date'].transform('min'))
+                 .assign(first_churn=lambda x: (x['n_prev_churns'] == 0) & (x['churn'] == True)))
+
+        print('10')
+
 
         def time_diff_days(df, last, first):
             return (df[last] - df[first]).dt.total_seconds() / (60 * 60 * 24)
@@ -290,11 +305,13 @@ class _DatasetKKBoxChurn(_DatasetLoader):
         indivs = (indivs
                   .assign(time=lambda x: time_diff_days(x, 'membership_expire_date', 'start_date'),
                           days_since_reg_init=lambda x: time_diff_days(x, 'start_date', 'registration_init_time')))
+        print('11')
 
         # When multiple transactions on last day, remove all but the last
         indivs = indivs.loc[lambda x: x['transaction_date'] != x['next_trans_date']]
         assert indivs.shape == indivs.drop_duplicates(['msno', 'transaction_date']).shape
         assert (indivs['churn'] != indivs['censored']).all()
+        print('12')
 
         # Clean up and remove variables that are not from the first transaction day
         dropcols = ['transaction_date', 'is_cancel', 'next_trans_date', 'max_trans_date', 'prev_mem_exp_date',

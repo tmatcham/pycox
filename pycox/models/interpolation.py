@@ -117,7 +117,35 @@ class InterpolateDiscrete:
         return pd.DataFrame(surv.transpose(), index)
 
 
+    def predict_hazard_df(self, input, batch_size=8224, eval_=True, to_cpu=False, num_workers=0):
+        """Predict the haard function for `input` and return as a pandas DataFrame.
+        See `predict_haz` to return tensor or np.array instead.
+
+        Arguments:
+            input {tuple, np.ndarray, or torch.tensor} -- Input to net.
+
+        Keyword Arguments:
+            batch_size {int} -- Batch size (default: {8224})
+            eval_ {bool} -- If 'True', use 'eval' mode on net. (default: {True})
+            num_workers {int} -- Number of workers in created dataloader (default: {0})
+
+        Returns:
+            pd.DataFrame -- Predictions
+        """
+        haz = self.predict_hazard(input, batch_size, True, eval_, to_cpu, num_workers)
+        index = None
+        if self.duration_index is not None:
+            index = utils.make_subgrid(self.duration_index, self.sub)
+        return pd.DataFrame(haz.transpose(), index)
+
+
 class InterpolatePMF(InterpolateDiscrete):
+    def predict_hazard(self, input, batch_size=8224, numpy=None, eval_=True, to_cpu=False, num_workers=0):
+        pmf = self.predict_pmf(input, batch_size, False, eval_, to_cpu, num_workers)
+        surv = self._surv_const_pdf(input, batch_size, False, eval_, to_cpu, num_workers)
+        haz = pmf / utils.pad_col(surv, 1, 'start')[:, :-1]
+        return tt.utils.array_or_tensor(haz, numpy, input)
+
     def predict_pmf(self, input, batch_size=8224, numpy=None, eval_=True, to_cpu=False, num_workers=0):
         if not self.scheme in ['const_pdf', 'lin_surv']:
             raise NotImplementedError

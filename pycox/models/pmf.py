@@ -36,6 +36,13 @@ class PMFBase(models.base.SurvBase):
         surv = 1 - pmf.cumsum(1)
         return tt.utils.array_or_tensor(surv, numpy, input)
 
+    def predict_haz(self, input, batch_size=8224, numpy=None, eval_=True, to_cpu=False,
+                     num_workers=0):
+        pmf = self.predict_pmf(input, batch_size, False, eval_, to_cpu, num_workers)
+        surv = 1 - pmf.cumsum(1)
+        haz = pmf / pad_col(surv, 1, 'start')[:, :-1]
+        return tt.utils.array_or_tensor(haz, numpy, input)
+
     def predict_pmf(self, input, batch_size=8224, numpy=None, eval_=True, to_cpu=False,
                     num_workers=0):
         preds = self.predict(input, batch_size, False, eval_, False, to_cpu, num_workers)
@@ -45,6 +52,10 @@ class PMFBase(models.base.SurvBase):
     def predict_surv_df(self, input, batch_size=8224, eval_=True, num_workers=0):
         surv = self.predict_surv(input, batch_size, True, eval_, True, num_workers)
         return pd.DataFrame(surv.transpose(), self.duration_index)
+
+    def predict_haz_df(self, input, batch_size=8224, eval_=True, num_workers=0):
+        haz = self.predict_haz(input, batch_size, True, eval_, True, num_workers)
+        return pd.DataFrame(haz.transpose(), self.duration_index)
 
     def interpolate(self, sub=10, scheme='const_pdf', duration_index=None):
         """Use interpolation for predictions.
